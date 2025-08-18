@@ -24,10 +24,7 @@ class GeminiAnalyzer:
 
         full_reviews_text = "\n\n".join([f"Отзыв {i+1}: {review}" for i, review in enumerate(reviews)])
         
-        # Увеличим лимит, но все равно нужно быть осторожным. 
-        # 1M токенов для Flash это ~700k слов или ~3-4M символов (очень грубо).
-        # Безопасный лимит для одного запроса, чтобы не упереться в непредвиденные ограничения.
-        max_len = 250000 # Примерно 250к символов. Подбирайте экспериментально.
+        max_len = 250000
         if len(full_reviews_text) > max_len:
             original_len = len(full_reviews_text)
             full_reviews_text = full_reviews_text[:max_len]
@@ -98,7 +95,6 @@ class GeminiAnalyzer:
             logger.error(f"Ошибка при взаимодействии с Gemini API для '{product_name}': {e}")
             if "API key not valid" in str(e) or "PERMISSION_DENIED" in str(e).upper():
                  return None, "Ошибка API: Недействительный или заблокированный API ключ Gemini."
-            # Более общая обработка ошибок от Gemini, включая возможные ошибки из-за размера контента
             if "content" in str(e).lower() and ("size" in str(e).lower() or "limit" in str(e).lower()):
                 return None, f"Ошибка Gemini API: Возможно, превышен лимит размера входных данных. {e}"
             return None, f"Ошибка Gemini API: {e}"
@@ -112,7 +108,6 @@ if __name__ == '__main__':
         print("Ошибка: GEMINI_API_KEY не найден в .env.")
     else:
         analyzer = GeminiAnalyzer(api_key=api_key)
-        # Пример с большим количеством текста (имитация)
         sample_reviews_large = [f"Это очень хороший отзыв номер {i}, всем советую, товар просто супер, качество отличное, доставка быстрая, упаковка целая, цвет соответствует." for i in range(200)]
         sample_reviews_large.append("А вот этот телефон быстро разряжается, хотя камера снимает неплохо, но экран мог бы быть и поярче, зато цена приемлемая.")
         sample_reviews_large.append("Ужасный товар, сломался на второй день, никому не советую, деньги на ветер, продавец обманщик, не покупайте здесь ничего.")

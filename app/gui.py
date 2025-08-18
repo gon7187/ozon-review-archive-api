@@ -21,7 +21,7 @@ ERROR_COLOR = "#E74C3C"
 WARNING_COLOR = "#F39C12"
 
 DEFAULT_REVIEWS_LIMIT = 200
-MAX_REVIEWS_LIMIT_INPUT = 5000 # Максимум, который пользователь может ввести в поле
+MAX_REVIEWS_LIMIT_INPUT = 5000
 
 class App(ctk.CTk):
     def __init__(self, gemini_api_key: str):
@@ -57,19 +57,11 @@ class App(ctk.CTk):
         try:
             if os.path.exists(icon_path_ico):
                 self.iconbitmap(icon_path_ico)
-            elif os.path.exists(icon_path_png): # Pillow должен быть установлен
+            elif os.path.exists(icon_path_png):
                 from PIL import Image, ImageTk
                 img = Image.open(icon_path_png)
-                ctk_img = ctk.CTkImage(light_image=img, dark_image=img, size=(32,32)) # Для CTkImage лучше сразу задать размер
-                # Для iconphoto нужен объект PhotoImage или BitmapImage
-                # CTkImage напрямую не подходит. Преобразуем в PhotoImage.
-                # Этот способ не очень хорошо работает с CTkImage, лучше использовать self.iconbitmap для .ico
-                # или если есть простой способ получить PhotoImage из CTkImage.
-                # Пока оставим как есть, .ico предпочтительнее для Windows.
-                # self.iconphoto(True, ctk_img) # Эта строка может не сработать как ожидается с CTkImage
-                # Проще: self.tk.call('wm', 'iconphoto', self._w, ImageTk.PhotoImage(file=icon_path_png))
-                # Но для CustomTkinter лучше придерживаться его API или использовать .ico
-                pass # Если есть .ico, он будет использован. PNG сложнее.
+                ctk_img = ctk.CTkImage(light_image=img, dark_image=img, size=(32,32))
+                pass
         except Exception as e_icon:
             logger.warning(f"Не удалось установить иконку приложения: {e_icon}")
         
@@ -126,7 +118,7 @@ class App(ctk.CTk):
         results_frame.pack(pady=10, padx=0, fill="both", expand=True)
 
         results_frame.columnconfigure(0, weight=1)
-        results_frame.columnconfigure(1, weight=0, minsize=10) # Уменьшил разделитель
+        results_frame.columnconfigure(1, weight=0, minsize=10)
         results_frame.columnconfigure(2, weight=1) 
         results_frame.rowconfigure(1, weight=1) 
 
@@ -173,7 +165,7 @@ class App(ctk.CTk):
         def show_menu(event):
             widget.focus_set() 
             try:
-                if widget.tag_ranges("sel"): # Проверка выделения для CTkTextbox
+                if widget.tag_ranges("sel"):
                     menu.entryconfig("Копировать", state="normal")
                 else:
                     menu.entryconfig("Копировать", state="disabled")
@@ -268,8 +260,8 @@ class App(ctk.CTk):
 
         try:
             reviews_to_analyze = int(self.limit_entry_var.get())
-            if not (0 < reviews_to_analyze <= MAX_REVIEWS_LIMIT_INPUT) : # 0 не имеет смысла, ставим хотя бы 1
-                 raise ValueError() # Вызовет общий обработчик
+            if not (0 < reviews_to_analyze <= MAX_REVIEWS_LIMIT_INPUT):
+                 raise ValueError()
         except ValueError:
             self._update_status(f"Лимит отзывов: число от 1 до {MAX_REVIEWS_LIMIT_INPUT}.", status_type="error", duration=4000)
             return

@@ -18,7 +18,7 @@ COMMON_HEADERS = {
     'Referer': 'https://www.wildberries.ru/',
 }
 
-MAX_REVIEWS_PER_REQUEST = 5000 # Теоретический максимум, который может вернуть API за раз. WB может обрезать.
+MAX_REVIEWS_PER_REQUEST = 5000
 
 def get_product_id_from_url(url: str) -> Optional[str]:
     match = re.search(r"/catalog/(\d+)/detail\.aspx", url)
@@ -77,10 +77,7 @@ def fetch_product_data_and_reviews(product_id: str, reviews_limit: int = 200) ->
         return None, None, f"Ошибка ответа сервера (карточка товара): {e}"
 
     all_review_texts = []
-    
-    # WB API feedbacks1/2 обычно отдает сразу много, пагинация тут не так проста как с take/skip
-    # Мы запросим один раз, но можем получить много. reviews_limit будет применен уже к полученным.
-    
+
     feedback_urls_to_try = [
         FEEDBACK_URL_TEMPLATE_1.format(imt_id=imt_id),
         FEEDBACK_URL_TEMPLATE_2.format(imt_id=imt_id)
@@ -92,7 +89,6 @@ def fetch_product_data_and_reviews(product_id: str, reviews_limit: int = 200) ->
     for i, feedback_url in enumerate(feedback_urls_to_try):
         logger.info(f"Запрос отзывов (попытка {i+1}) для imt_id: {imt_id} с URL: {feedback_url}")
         try:
-            # Увеличим таймаут, так как ответ может быть большим
             response_feedback = requests.get(feedback_url, headers=COMMON_HEADERS, timeout=30) 
             response_feedback.raise_for_status()
             feedback_data = response_feedback.json()
@@ -154,7 +150,6 @@ def fetch_product_data_and_reviews(product_id: str, reviews_limit: int = 200) ->
             logger.info(f"Для товара '{product_name}' (ID: {product_id}) текстовые отзывы отсутствуют (0 на карточке).")
             return [], product_name, None
 
-    # Применяем reviews_limit к уже собранным отзывам
     limited_reviews = all_review_texts[:reviews_limit]
     logger.info(f"Всего извлечено {len(all_review_texts)} текстовых отзывов. Отобрано для анализа: {len(limited_reviews)} для товара '{product_name}'.")
     return limited_reviews, product_name, None
@@ -162,7 +157,6 @@ def fetch_product_data_and_reviews(product_id: str, reviews_limit: int = 200) ->
 
 if __name__ == '__main__':
     test_product_id = "224980546" 
-    # Увеличим лимит для теста, если хотите проверить загрузку большего числа
     test_reviews_limit = 500 
     print(f"Тестирование с ID: {test_product_id}, лимит отзывов: {test_reviews_limit}")
     
@@ -176,7 +170,5 @@ if __name__ == '__main__':
         print(f"Для товара '{name}' текстовые отзывы не найдены или отсутствуют.")
     elif reviews:
         print(f"Найдено {len(reviews)} отзывов для товара '{name}':")
-        # for i, review_text in enumerate(reviews[:5]): # Печатаем только первые 5 для краткости
-        #     print(f"{i+1}. {review_text[:100]}...")
     else:
         print("Неизвестный результат.")
