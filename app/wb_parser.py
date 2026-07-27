@@ -21,7 +21,7 @@ COMMON_HEADERS = {
 MAX_REVIEWS_PER_REQUEST = 5000
 
 def get_product_id_from_url(url: str) -> Optional[str]:
-    match = re.search(r"/catalog/(\d+)/detail\.aspx", url)
+    match = re.search(r"/catalog/(\d+)(?:/detail\.aspx)?", url)
     if match:
         return match.group(1)
     if url.isdigit():

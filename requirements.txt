@@ -1,5 +1,6 @@
 requests
-google-generativeai
+google-genai
 python-dotenv
 customtkinter
 Pillow
+playwright

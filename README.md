@@ -1,59 +1,69 @@
-# WB Product Review Analyzer (Анализатор отзывов товаров на WB)
+# Анализатор отзывов Ozon и Wildberries
 
-Проект для анализа отзывов на товары с Wildberries с использованием Gemini API для структурирования положительных и отрицательных моментов. Приложение имеет графический интерфейс, выполненный в строгом черно-белом дизайне.
+Десктопное приложение для загрузки отзывов о товаре, выделения повторяющихся
+плюсов и минусов и получения итоговой рекомендации с помощью Gemini.
 
-## Особенности
+## Возможности
 
-*   Получение отзывов о товаре с Wildberries по ID или URL товара.
-*   Анализ текста отзывов с помощью Google Gemini API.
-*   Структурированное представление плюсов и минусов товара.
-*   Графический интерфейс на CustomTkinter.
-*   Строгий черно-белый дизайн с элементами анимации загрузки.
+- автоматическое определение Ozon (`ozon.ru` и `ozon.by`) или Wildberries по ссылке;
+- ввод артикула вручную с явным выбором маркетплейса;
+- настройка количества отзывов от 1 до 5000;
+- структурированный анализ через Gemini 2.5 Flash;
+- итоговый вердикт «Лучше брать», «Можно брать с оговорками» или «Лучше не брать»;
+- краткое объяснение рекомендации на основании повторяющихся отзывов;
+- отдельные кнопки копирования в заголовках плюсов и минусов;
+- понятные сообщения об ошибках;
+- постоянная браузерная сессия Ozon для прохождения защиты сайта.
 
-## Стек технологий
+## Установка на macOS
 
-*   Python 3.x
-*   CustomTkinter (для GUI)
-*   Requests (для HTTP-запросов к WB)
-*   Google Generative AI (Gemini API)
-*   python-dotenv (для управления переменными окружения)
+Для Homebrew Python 3.14 сначала установите поддержку Tk:
 
-## Установка
+```bash
+brew install python-tk@3.14
+```
 
-1.  **Клонируйте репозиторий:**
-    ```bash
-    git clone https://github.com/ReNothingg/WBcheker.git
-    cd wb_analyzer
-    ```
+Затем из папки проекта:
 
-2.  **Создайте и активируйте виртуальное окружение (рекомендуется):**
-    ```bash
-    python -m venv venv
-    # Windows
-    venv\Scripts\activate
-    # macOS/Linux
-    source venv/bin/activate
-    ```
+```bash
+/opt/homebrew/bin/python3 -m venv .venv
+source .venv/bin/activate
+PIP_USER=false python -m pip install -r requirements.txt
+python -m playwright install chromium
+cp .env.example .env
+```
 
-3.  **Установите зависимости:**
-    ```bash
-    pip install -r requirements.txt
-    ```
+В `.env` укажите ключ:
 
-4.  **Настройте переменные окружения:**
-    Скопируйте файл `.env.example` в `.env`:
-    ```bash
-    cp .env.example .env
-    ```
-    Откройте файл `.env` и вставьте ваш API ключ для Gemini:
-    ```
-    GEMINI_API_KEY="ВАШ_GOOGLE_GEMINI_API_KEY"
-    ```
-    Получить ключ можно на [Google AI Studio](https://aistudio.google.com/app/apikey).
+```dotenv
+GEMINI_API_KEY=ваш_ключ
+```
 
 ## Запуск
 
-Выполните команду из корневой папки проекта:
+```bash
+source .venv/bin/activate
+python main.py
+```
+
+После первичной установки можно запускать и системным Python — `main.py`
+автоматически переключится на окружение проекта:
 
 ```bash
-python main.py
+/opt/homebrew/bin/python3 main.py
+```
+
+При первом анализе Ozon откроется Chromium. Если сайт попросит подтвердить, что
+вы не робот, пройдите проверку и запустите анализ повторно. Профиль браузера
+хранится локально в `~/Library/Application Support/OzonReviewAnalyzer`.
+
+## Проверка
+
+```bash
+python -m unittest discover -s tests -v
+python -m compileall -q main.py app
+```
+
+Сбор отзывов зависит от текущей разметки и защиты маркетплейсов. Приложение
+показывает отдельную диагностику, если Ozon изменил страницу или заблокировал
+загрузку.

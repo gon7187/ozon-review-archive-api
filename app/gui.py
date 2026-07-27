@@ -1,7 +1,15 @@
 import customtkinter as ctk
 from tkinter import messagebox, Menu
 import threading
-from .wb_parser import get_product_id_from_url, fetch_product_data_and_reviews
+from .marketplace import Marketplace, detect_marketplace
+from .ozon_parser import (
+    fetch_product_data_and_reviews as fetch_ozon_reviews,
+    get_product_id_from_url as get_ozon_product_id,
+)
+from .wb_parser import (
+    fetch_product_data_and_reviews as fetch_wb_reviews,
+    get_product_id_from_url as get_wb_product_id,
+)
 from .gemini_analyzer import GeminiAnalyzer
 import os
 import logging
@@ -48,8 +56,9 @@ class App(ctk.CTk):
             self.destroy()
             return
 
-        self.title("WB Review Analyzer")
-        self.geometry("900x800") 
+        self.title("Marketplace Review Analyzer")
+        self.geometry("1100x760")
+        self.minsize(900, 620)
         self.configure(fg_color=BG_COLOR)
         
         icon_path_ico = "app/assets/icon.ico" 
@@ -82,12 +91,21 @@ class App(ctk.CTk):
         input_controls_frame = ctk.CTkFrame(main_frame, fg_color=BG_COLOR)
         input_controls_frame.pack(pady=(0,15), padx=0, fill="x")
 
-        self.url_label = ctk.CTkLabel(input_controls_frame, text="URL или ID товара WB:", text_color=TEXT_COLOR, font=("Arial", 14))
+        self.url_label = ctk.CTkLabel(input_controls_frame, text="Товар:", text_color=TEXT_COLOR, font=("Arial", 14))
         self.url_label.pack(side="left", padx=(0, 10))
+
+        self.marketplace_var = ctk.StringVar(value=Marketplace.OZON.value)
+        self.marketplace_menu = ctk.CTkSegmentedButton(
+            input_controls_frame,
+            values=[Marketplace.OZON.value, Marketplace.WILDBERRIES.value],
+            variable=self.marketplace_var,
+            width=210,
+        )
+        self.marketplace_menu.pack(side="left", padx=(0, 10))
 
         self.url_entry = ctk.CTkEntry(input_controls_frame, width=350, font=("Arial", 14),
                                       fg_color=INPUT_BG_COLOR, text_color=TEXT_COLOR,
-                                      border_color=BORDER_COLOR, placeholder_text="Ссылка или артикул...")
+                                      border_color=BORDER_COLOR, placeholder_text="Ссылка на товар или артикул...")
         self.url_entry.pack(side="left", expand=True, fill="x", padx=(0,10))
         self.url_entry.focus_set()
 
@@ -104,6 +122,7 @@ class App(ctk.CTk):
                                             font=("Arial", 14, "bold"), fg_color=BUTTON_COLOR,
                                             hover_color=BUTTON_HOVER_COLOR, text_color=ACCENT_COLOR, width=150)
         self.analyze_button.pack(side="left")
+        self.url_entry.bind("<Return>", lambda _event: self.start_analysis_thread())
 
         self.status_frame = ctk.CTkFrame(main_frame, fg_color=BG_COLOR, height=30)
         self.status_frame.pack(pady=(0,10), fill="x")
@@ -122,8 +141,23 @@ class App(ctk.CTk):
         results_frame.columnconfigure(2, weight=1) 
         results_frame.rowconfigure(1, weight=1) 
 
-        self.pros_label = ctk.CTkLabel(results_frame, text="✅ Плюсы:", text_color=SUCCESS_COLOR, font=("Arial", 16, "bold"))
-        self.pros_label.grid(row=0, column=0, padx=10, pady=(0,5), sticky="w")
+        pros_header = ctk.CTkFrame(results_frame, fg_color="transparent")
+        pros_header.grid(row=0, column=0, padx=(10, 5), pady=(0, 5), sticky="ew")
+        self.pros_label = ctk.CTkLabel(
+            pros_header, text="✅ Плюсы:", text_color=SUCCESS_COLOR, font=("Arial", 16, "bold")
+        )
+        self.pros_label.pack(side="left")
+        self.copy_pros_button = ctk.CTkButton(
+            pros_header,
+            text="Копировать",
+            command=lambda: self._copy_to_clipboard(self.pros_text.get("1.0", "end-1c")),
+            fg_color=BUTTON_COLOR,
+            hover_color=BUTTON_HOVER_COLOR,
+            text_color=ACCENT_COLOR,
+            width=100,
+            height=28,
+        )
+        self.copy_pros_button.pack(side="right")
         
         self.pros_text = ctk.CTkTextbox(results_frame, wrap="word", state="disabled", font=("Arial", 13),
                                         fg_color=INPUT_BG_COLOR, text_color=TEXT_COLOR,
@@ -132,8 +166,23 @@ class App(ctk.CTk):
         self.pros_text.grid(row=1, column=0, padx=(10,5), pady=5, sticky="nsew")
         self._create_context_menu(self.pros_text)
 
-        self.cons_label = ctk.CTkLabel(results_frame, text="❌ Минусы:", text_color=ERROR_COLOR, font=("Arial", 16, "bold"))
-        self.cons_label.grid(row=0, column=2, padx=10, pady=(0,5), sticky="w")
+        cons_header = ctk.CTkFrame(results_frame, fg_color="transparent")
+        cons_header.grid(row=0, column=2, padx=(5, 10), pady=(0, 5), sticky="ew")
+        self.cons_label = ctk.CTkLabel(
+            cons_header, text="❌ Минусы:", text_color=ERROR_COLOR, font=("Arial", 16, "bold")
+        )
+        self.cons_label.pack(side="left")
+        self.copy_cons_button = ctk.CTkButton(
+            cons_header,
+            text="Копировать",
+            command=lambda: self._copy_to_clipboard(self.cons_text.get("1.0", "end-1c")),
+            fg_color=BUTTON_COLOR,
+            hover_color=BUTTON_HOVER_COLOR,
+            text_color=ACCENT_COLOR,
+            width=100,
+            height=28,
+        )
+        self.copy_cons_button.pack(side="right")
 
         self.cons_text = ctk.CTkTextbox(results_frame, wrap="word", state="disabled", font=("Arial", 13),
                                         fg_color=INPUT_BG_COLOR, text_color=TEXT_COLOR,
@@ -142,18 +191,30 @@ class App(ctk.CTk):
         self.cons_text.grid(row=1, column=2, padx=(5,10), pady=5, sticky="nsew")
         self._create_context_menu(self.cons_text)
         
-        copy_button_frame = ctk.CTkFrame(main_frame, fg_color=BG_COLOR)
-        copy_button_frame.pack(pady=(10,0), fill="x")
-        
-        self.copy_pros_button = ctk.CTkButton(copy_button_frame, text="Копировать плюсы", 
-                                              command=lambda: self._copy_to_clipboard(self.pros_text.get("1.0", "end-1c")),
-                                              fg_color=BUTTON_COLOR, hover_color=BUTTON_HOVER_COLOR, text_color=ACCENT_COLOR)
-        self.copy_pros_button.pack(side="left", padx=10, expand=True)
-        
-        self.copy_cons_button = ctk.CTkButton(copy_button_frame, text="Копировать минусы", 
-                                              command=lambda: self._copy_to_clipboard(self.cons_text.get("1.0", "end-1c")),
-                                              fg_color=BUTTON_COLOR, hover_color=BUTTON_HOVER_COLOR, text_color=ACCENT_COLOR)
-        self.copy_cons_button.pack(side="right", padx=10, expand=True)
+        self.recommendation_frame = ctk.CTkFrame(
+            main_frame, fg_color=INPUT_BG_COLOR, border_color=BORDER_COLOR, border_width=1
+        )
+        self.recommendation_frame.pack(padx=10, pady=(5, 0), fill="x")
+
+        self.recommendation_verdict_label = ctk.CTkLabel(
+            self.recommendation_frame,
+            text="💡 Итоговая рекомендация появится после анализа",
+            text_color=TEXT_COLOR,
+            font=("Arial", 15, "bold"),
+            anchor="w",
+        )
+        self.recommendation_verdict_label.pack(padx=16, pady=(12, 2), fill="x")
+
+        self.recommendation_reason_label = ctk.CTkLabel(
+            self.recommendation_frame,
+            text="",
+            text_color=TEXT_COLOR,
+            font=("Arial", 13),
+            anchor="w",
+            justify="left",
+            wraplength=1000,
+        )
+        self.recommendation_reason_label.pack(padx=16, pady=(0, 12), fill="x")
 
     def _create_context_menu(self, widget):
         menu = Menu(widget, tearoff=0, background=INPUT_BG_COLOR, foreground=TEXT_COLOR, 
@@ -237,8 +298,19 @@ class App(ctk.CTk):
             widget.delete("1.0", "end")
             widget.configure(state="disabled")
         self.analyzed_reviews_count_label.configure(text="")
+        self.recommendation_verdict_label.configure(
+            text="💡 Итоговая рекомендация появится после анализа",
+            text_color=TEXT_COLOR,
+        )
+        self.recommendation_reason_label.configure(text="")
 
-    def _display_results(self, pros: list, cons: list, num_reviews_analyzed: int = 0):
+    def _display_results(
+        self,
+        pros: list,
+        cons: list,
+        recommendation: dict | None = None,
+        num_reviews_analyzed: int = 0,
+    ):
         self.pros_text.configure(state="normal")
         self.pros_text.insert("1.0", "\n".join([f"• {p}" for p in pros]) if pros else "Не найдено")
         self.pros_text.configure(state="disabled")
@@ -246,6 +318,20 @@ class App(ctk.CTk):
         self.cons_text.configure(state="normal")
         self.cons_text.insert("1.0", "\n".join([f"• {c}" for c in cons]) if cons else "Не найдено")
         self.cons_text.configure(state="disabled")
+
+        recommendation = recommendation or {}
+        verdict = recommendation.get("verdict") or "Недостаточно данных"
+        reason = recommendation.get("reason") or "Модель не смогла сформировать итоговую рекомендацию."
+        verdict_colors = {
+            "Лучше брать": SUCCESS_COLOR,
+            "Можно брать с оговорками": WARNING_COLOR,
+            "Лучше не брать": ERROR_COLOR,
+        }
+        self.recommendation_verdict_label.configure(
+            text=f"💡 {verdict}",
+            text_color=verdict_colors.get(verdict, TEXT_COLOR),
+        )
+        self.recommendation_reason_label.configure(text=reason)
 
         if num_reviews_analyzed > 0:
             self.analyzed_reviews_count_label.configure(text=f"Проанализировано: {num_reviews_analyzed} отзыв(ов)")
@@ -277,13 +363,30 @@ class App(ctk.CTk):
         num_reviews_fetched = 0
         try:
             self.after(0, lambda: self._start_loading_animation("Получение ID..."))
-            product_id = get_product_id_from_url(url_or_id)
-            
-            if not product_id and url_or_id.isdigit(): product_id = url_or_id
+            if url_or_id.isdigit():
+                marketplace = Marketplace(self.marketplace_var.get())
+            else:
+                marketplace = detect_marketplace(url_or_id)
+                self.after(0, lambda value=marketplace.value: self.marketplace_var.set(value))
+
+            if marketplace is Marketplace.OZON:
+                product_id = get_ozon_product_id(url_or_id)
+                fetch_reviews = fetch_ozon_reviews
+            else:
+                product_id = get_wb_product_id(url_or_id)
+                fetch_reviews = fetch_wb_reviews
+
             if not product_id: raise ValueError("Некорректный URL или ID.")
             
-            self.after(0, lambda pid=product_id: self._start_loading_animation(f"Загрузка данных ID: {pid}..."))
-            reviews, product_name, error_msg = fetch_product_data_and_reviews(product_id, reviews_limit=reviews_limit) 
+            self.after(
+                0,
+                lambda pid=product_id, market=marketplace.value:
+                    self._start_loading_animation(f"{market}: загрузка товара {pid}...")
+            )
+            reviews, product_name, error_msg = fetch_reviews(
+                url_or_id if marketplace is Marketplace.OZON else product_id,
+                reviews_limit=reviews_limit,
+            )
             
             if error_msg: raise Exception(f"{error_msg}")
 
@@ -303,10 +406,19 @@ class App(ctk.CTk):
             if not analysis_result: raise Exception("Gemini не вернул результат.")
 
             self.after(0, lambda: self._stop_loading_animation("Анализ завершен.", status_type="success"))
-            self.after(0, lambda: self._display_results(analysis_result.get("pros", []), 
-                                                        analysis_result.get("cons", []),
-                                                        num_reviews_analyzed=num_reviews_fetched))
-            logger.info(f"Анализ для '{product_name}' (ID: {product_id}) завершен. Проанализировано {num_reviews_fetched} отзывов.")
+            self.after(
+                0,
+                lambda: self._display_results(
+                    analysis_result.get("pros", []),
+                    analysis_result.get("cons", []),
+                    analysis_result.get("recommendation", {}),
+                    num_reviews_analyzed=num_reviews_fetched,
+                ),
+            )
+            logger.info(
+                "Анализ %s для '%s' (ID: %s) завершен. Проанализировано %s отзывов.",
+                marketplace.value, product_name, product_id, num_reviews_fetched,
+            )
 
         except ValueError as ve:
             self.after(0, lambda err=ve: self._stop_loading_animation(f"Ошибка: {err}", status_type="error"))
