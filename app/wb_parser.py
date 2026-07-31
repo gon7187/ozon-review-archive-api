@@ -1,12 +1,13 @@
-import requests
-import re
 import logging
+import re
 from typing import List, Optional, Tuple
+
+import requests
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
-CARD_URL_TEMPLATE = "https://card.wb.ru/cards/v1/detail?appType=1&curr=rub&dest=-1257786&spp=30&nm={product_id}"
+CARD_URL_TEMPLATE = "https://card.wb.ru/cards/v4/detail?appType=1&curr=rub&dest=-1257786&spp=30&nm={product_id}"
 FEEDBACK_URL_TEMPLATE_1 = "https://feedbacks1.wb.ru/feedbacks/v1/{imt_id}"
 FEEDBACK_URL_TEMPLATE_2 = "https://feedbacks2.wb.ru/feedbacks/v1/{imt_id}"
 
@@ -20,6 +21,7 @@ COMMON_HEADERS = {
 
 MAX_REVIEWS_PER_REQUEST = 5000
 
+
 def get_product_id_from_url(url: str) -> Optional[str]:
     match = re.search(r"/catalog/(\d+)(?:/detail\.aspx)?", url)
     if match:
@@ -28,6 +30,20 @@ def get_product_id_from_url(url: str) -> Optional[str]:
         return url
     logger.warning(f"Не удалось извлечь ID товара из URL: {url}")
     return None
+
+
+def _get_products(card_data: dict) -> list[dict]:
+    """Return products from both the current v4 and the legacy API response."""
+    products = card_data.get("products")
+    if isinstance(products, list):
+        return products
+
+    legacy_data = card_data.get("data")
+    if isinstance(legacy_data, dict) and isinstance(legacy_data.get("products"), list):
+        return legacy_data["products"]
+
+    return []
+
 
 def fetch_product_data_and_reviews(product_id: str, reviews_limit: int = 200) -> Tuple[Optional[List[str]], Optional[str], Optional[str]]:
     if not product_id:
@@ -45,14 +61,10 @@ def fetch_product_data_and_reviews(product_id: str, reviews_limit: int = 200) ->
         response_card.raise_for_status()
         card_data = response_card.json()
 
-        if not card_data.get("data") or not card_data["data"].get("products"):
+        product_info_list = _get_products(card_data)
+        if not product_info_list:
             logger.warning(f"Не найдены данные для товара {product_id} в ответе от card.wb.ru")
             return None, None, "Товар не найден или информация о нем неполная (ответ от card.wb.ru)."
-        
-        product_info_list = card_data["data"]["products"]
-        if not product_info_list:
-            logger.warning(f"Список продуктов пуст для товара {product_id} в ответе от card.wb.ru")
-            return None, None, "Товар не найден (пустой список продуктов от card.wb.ru)."
 
         product_info = product_info_list[0]
         imt_id = product_info.get("root")
