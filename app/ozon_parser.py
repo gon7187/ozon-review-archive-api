@@ -68,6 +68,34 @@ def _json_number(value: Any) -> Any:
     return str(value).strip() or None
 
 
+def _as_int(value: Any) -> int | None:
+    if isinstance(value, bool) or value is None:
+        return None
+    if isinstance(value, int):
+        return value
+    match = re.search(r"\d[\d\s\u00a0]*", str(value))
+    return int(re.sub(r"\D", "", match.group(0))) if match else None
+
+
+def _as_decimal(value: Any) -> int | float | None:
+    if isinstance(value, bool) or value is None:
+        return None
+    if isinstance(value, (int, float)):
+        return value
+    match = re.search(r"\d+(?:[.,]\d+)?", str(value))
+    if not match:
+        return None
+    number = match.group(0).replace(",", ".")
+    return float(number) if "." in number else int(number)
+
+
+def _price_value(value: Any) -> Any:
+    if not isinstance(value, str):
+        return value
+    matches = re.findall(r"\d[\d\s\u00a0]*\s*(?:₽|руб)", value, re.IGNORECASE)
+    return _as_int(matches[-1]) if matches else value.strip() or None
+
+
 def _category_values(value: Any) -> list[str] | None:
     if value is None:
         return None
@@ -191,11 +219,14 @@ def _clean_review(text: str) -> str:
         for line in lines[start:end]
         if not re.fullmatch(r"\d+ комментар(?:ий|ия|иев)", line.lower())
     ]
-    return " ".join(useful).strip()
+    result = " ".join(useful).strip()
+    return re.sub(r"\s*[.…]+\s*Читать полностью\s*$", "", result).strip()
 
 
 def _locator_text(locator: Any, timeout: int = 1_000) -> str | None:
     try:
+        if not locator.count():
+            return None
         value = locator.first.text_content(timeout=timeout)
     except Exception:  # noqa: BLE001 - Playwright raises several browser errors.
         return None
@@ -205,6 +236,8 @@ def _locator_text(locator: Any, timeout: int = 1_000) -> str | None:
 
 def _locator_attribute(locator: Any, attribute: str) -> str | None:
     try:
+        if not locator.count():
+            return None
         value = locator.first.get_attribute(attribute)
     except Exception:  # noqa: BLE001 - Playwright raises several browser errors.
         return None
@@ -244,6 +277,9 @@ def _rating_from_node(node: Any, raw_text: str) -> Any:
             match = re.search(r"(?:^|\s)([1-5])(?:[,.]\d+)?(?:\s|$)", value)
             if match:
                 return int(match.group(1))
+    stars = node.locator("div[class*='jm4'] svg").count()
+    if 1 <= stars <= 5:
+        return stars
     for selector in (
         "[aria-label*='рейтинг']",
         "[aria-label*='звезд']",
@@ -298,6 +334,14 @@ def _extract_review_record(node: Any) -> dict[str, Any] | None:
         date = date_match.group(0) if date_match else None
 
     purchased = None
+    try:
+        order_type = node.get_attribute("ordertype")
+    except Exception:  # noqa: BLE001 - a detached review node is simply skipped.
+        order_type = None
+    if order_type == "1":
+        purchased = True
+    elif order_type == "0":
+        purchased = False
     if re.search(r"(товар|покупка).{0,20}(куплен|подтвержд)", raw_text, re.IGNORECASE):
         purchased = True
     elif re.search(r"(товар|покупка).{0,20}не куплен", raw_text, re.IGNORECASE):
@@ -308,16 +352,23 @@ def _extract_review_record(node: Any) -> dict[str, Any] | None:
         text,
         author=_first_text(
             node,
-            ("[data-review-author]", "[class*='author']", "a[href*='/profile']"),
+            (
+                "span[class*='tsCompactControl500Medium']",
+                "[data-review-author]",
+                "[class*='author']",
+                "a[href*='/profile']",
+            ),
         ),
         rating=_rating_from_node(node, raw_text),
         date=date,
         pros=_labeled_value(raw_text, ("Достоинства", "Плюсы")),
         cons=_labeled_value(raw_text, ("Недостатки", "Минусы")),
         purchased=purchased,
-        likes=_number_after_label(raw_text, ("полезен", "полезно", "лайк")),
-        dislikes=_number_after_label(raw_text, ("не полезен", "дизлайк")),
-        photos=_extract_media(node, "img", ("src", "data-src")),
+        likes=_number_after_label(raw_text, ("Да",)),
+        dislikes=_number_after_label(raw_text, ("Нет",)),
+        photos=_extract_media(
+            node, "button[aria-label*='галер'] img", ("src", "data-src")
+        ),
         videos=_extract_media(node, "video, video source", ("src", "poster")),
     )
 
@@ -325,11 +376,12 @@ def _extract_review_record(node: Any) -> dict[str, Any] | None:
 def _page_title(page: Any) -> str:
     heading = _locator_text(page.locator("h1"), timeout=8_000) or ""
     title_lines = [line.strip() for line in heading.splitlines() if line.strip()]
-    return (
+    title = (
         title_lines[-1]
         if title_lines
         else f"Товар Ozon {get_product_id_from_url(page.url) or ''}".strip()
     )
+    return re.sub(r"^Отзывы о товаре\s+\d+\s*", "", title).strip() or title
 
 
 def _check_fetch_state(
@@ -439,17 +491,22 @@ def _collect_product_metadata(
         payloads = []
     structured = parse_product_jsonld(payloads)
     category_path = _collect_category_path(page) or structured.get("category_path")
-    price = structured.get("price") or _first_text(
-        page, ("[itemprop='price']", "[data-widget*='webPrice']", "[class*='price']")
+    price = _price_value(
+        structured.get("price")
+        or _first_text(
+            page,
+            ("[itemprop='price']", "[data-widget*='webPrice']", "[class*='price']"),
+        )
     )
-    rating = structured.get("rating") or _first_text(
-        page, ("[itemprop='ratingValue']", "[aria-label*='рейтинг']")
+    rating = _as_decimal(
+        structured.get("rating")
+        or _first_text(page, ("[itemprop='ratingValue']", "[aria-label*='рейтинг']"))
     )
-    reviews_count = structured.get("reviews_count")
+    reviews_count = _as_int(structured.get("reviews_count"))
     if reviews_count is None:
         body = _locator_text(page.locator("body"), timeout=5_000) or ""
         match = re.search(r"([\d\s\u00a0]+)\s+отзыв", body, re.IGNORECASE)
-        reviews_count = int(re.sub(r"\D", "", match.group(1))) if match else None
+        reviews_count = _as_int(match.group(1)) if match else None
 
     brand = structured.get("brand") or _first_text(
         page, ("[itemprop='brand']", "[data-widget*='brand']")
@@ -464,7 +521,7 @@ def _collect_product_metadata(
     )
     return {
         "requested_url": requested_url,
-        "source_url": page.url or requested_url,
+        "source_url": (page.url or requested_url).split("?", 1)[0],
         "article": product_id,
         "name": title or structured.get("name"),
         "category_path": category_path,
@@ -564,12 +621,18 @@ def fetch_product_archive_and_reviews(
                 page.wait_for_timeout(2_000)
                 _check_fetch_state(deadline, should_cancel)
 
-                page_text = _locator_text(page.locator("body"), timeout=10_000) or ""
+                remaining_ms = max(100, int((deadline - time.monotonic()) * 1_000))
+                page_text = (
+                    _locator_text(
+                        page.locator("body"), timeout=min(1_000, remaining_ms)
+                    )
+                    or ""
+                )
                 if "Похоже, нет соединения" in page_text:
                     return None, "Ozon не открыл страницу. Проверьте интернет или VPN."
                 captcha_reported = False
                 while re.search(
-                    r"не робот|проверка безопасности|доступ ограничен",
+                    r"не робот|проверка безопасности|доступ ограничен|включите javascript",
                     page_text,
                     re.IGNORECASE,
                 ):
@@ -578,11 +641,14 @@ def fetch_product_archive_and_reviews(
                         captcha_reported = True
                         if on_captcha:
                             on_captcha()
-                    page.wait_for_timeout(
-                        min(1_000, max(100, int((deadline - time.monotonic()) * 1_000)))
-                    )
+                    remaining_ms = max(100, int((deadline - time.monotonic()) * 1_000))
+                    page.wait_for_timeout(min(1_000, remaining_ms))
+                    _check_fetch_state(deadline, should_cancel)
                     page_text = (
-                        _locator_text(page.locator("body"), timeout=10_000) or ""
+                        _locator_text(
+                            page.locator("body"), timeout=min(1_000, remaining_ms)
+                        )
+                        or ""
                     )
 
                 title, reviews = _extract_page(
