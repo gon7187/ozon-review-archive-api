@@ -42,6 +42,7 @@ class Job:
     attempt: int = 0
     retry_count: int = 0
     proxy_rotated: bool = False
+    proxy_rotating: bool = field(default=False, repr=False)
     archive: dict[str, Any] | None = field(default=None, repr=False)
     cancel_event: threading.Event = field(default_factory=threading.Event, repr=False)
 
@@ -130,6 +131,8 @@ class JobManager:
                 )
             if job.status == "waiting_for_captcha" and not job.proxy_rotated:
                 raise RuntimeError("Сначала вызовите rotate-proxy для этой задачи.")
+            if job.proxy_rotating:
+                raise RuntimeError("Дождитесь завершения ротации прокси.")
             job.cancel_event.set()
             job.retry_count += 1
             job.status = "queued"
@@ -149,9 +152,22 @@ class JobManager:
                 raise RuntimeError(
                     "Ротация прокси доступна в ожидании проверки или после ошибки."
                 )
-        self._proxy_rotator()
+            if job.proxy_rotating:
+                raise RuntimeError("Ротация прокси уже выполняется.")
+            job.proxy_rotating = True
+        try:
+            self._proxy_rotator()
+        except Exception:
+            with self._lock:
+                job.proxy_rotating = False
+            raise
         with self._lock:
             job = self._require(job_id)
+            job.proxy_rotating = False
+            if job.status not in {"waiting_for_captcha", "failed"}:
+                raise RuntimeError(
+                    "Состояние задачи изменилось во время ротации прокси."
+                )
             job.proxy_rotated = True
             return self.snapshot(job)
 

@@ -209,3 +209,50 @@ def test_captcha_can_rotate_then_retry(monkeypatch, tmp_path: Path):
     assert rotations == 1
     wait_for_status(client, "test-token", created["id"], "succeeded")
     assert calls == 2
+
+
+def test_proxy_rotation_rejects_concurrent_call(monkeypatch, tmp_path: Path):
+    monkeypatch.setenv("API_TOKEN", "test-token")
+    captcha_started = threading.Event()
+    rotation_started = threading.Event()
+    release_rotation = threading.Event()
+
+    def fetcher(source: str, **kwargs: Any) -> tuple[None, str]:
+        captcha_started.set()
+        kwargs["on_captcha"]()
+        while not kwargs["should_cancel"]():
+            time.sleep(0.005)
+        return None, "cancelled"
+
+    def rotate() -> None:
+        rotation_started.set()
+        release_rotation.wait(1)
+
+    client = TestClient(
+        create_app(
+            JobManager(fetcher=fetcher, proxy_rotator=rotate, output_dir=tmp_path)
+        )
+    )
+    headers = {"Authorization": "Bearer test-token"}
+    created = client.post(
+        "/api/v1/jobs", json={"article": "123456"}, headers=headers
+    ).json()
+    assert captcha_started.wait(1)
+    wait_for_status(client, "test-token", created["id"], "waiting_for_captcha")
+
+    first_result: dict[str, Any] = {}
+
+    def call_rotate() -> None:
+        first_result["response"] = client.post(
+            f"/api/v1/jobs/{created['id']}/rotate-proxy", headers=headers
+        )
+
+    thread = threading.Thread(target=call_rotate)
+    thread.start()
+    assert rotation_started.wait(1)
+    second = client.post(f"/api/v1/jobs/{created['id']}/rotate-proxy", headers=headers)
+    release_rotation.set()
+    thread.join(1)
+
+    assert second.status_code == 409
+    assert first_result["response"].status_code == 200
