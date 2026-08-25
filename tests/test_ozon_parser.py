@@ -3,6 +3,7 @@ from app.ozon_parser import (
     make_review_record,
     parse_product_jsonld,
     project_for_analysis,
+    sanitize_error,
     save_archive,
 )
 
@@ -53,3 +54,10 @@ def test_archive_is_written_as_one_product_json(tmp_path):
 
     assert path == tmp_path / "123456.json"
     assert '"article": "123456"' in path.read_text(encoding="utf-8")
+
+
+def test_proxy_credentials_are_removed_from_errors():
+    message = sanitize_error("request failed: https://user:secret@proxy.example:8080")
+
+    assert "secret" not in message
+    assert "***:***@proxy.example" in message

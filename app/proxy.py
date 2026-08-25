@@ -4,10 +4,14 @@ import os
 from urllib.request import Request, urlopen
 
 
+class ProxyRotationError(RuntimeError):
+    pass
+
+
 def rotate_proxy() -> None:
     endpoint = os.getenv("PROXY_ROTATE_URL")
     if not endpoint:
-        raise RuntimeError("PROXY_ROTATE_URL не настроен.")
+        raise ProxyRotationError("PROXY_ROTATE_URL не настроен.")
 
     method = os.getenv("PROXY_ROTATE_METHOD", "POST").upper()
     headers = {}
@@ -19,6 +23,6 @@ def rotate_proxy() -> None:
         with urlopen(request, timeout=20) as response:
             response_status = response.status
     except Exception:  # noqa: BLE001 - не выдаём endpoint или токен наружу.
-        raise RuntimeError("Не удалось вызвать сервис ротации прокси.") from None
+        raise ProxyRotationError("Не удалось вызвать сервис ротации прокси.") from None
     if response_status >= 400:
-        raise RuntimeError("Сервис ротации прокси вернул ошибку.")
+        raise ProxyRotationError("Сервис ротации прокси вернул ошибку.")

@@ -9,7 +9,11 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from app.ozon_parser import fetch_product_archive_and_reviews, save_archive
+from app.ozon_parser import (
+    fetch_product_archive_and_reviews,
+    sanitize_error,
+    save_archive,
+)
 from app.proxy import rotate_proxy
 
 JobFetcher = Callable[..., tuple[dict[str, Any] | None, str | None]]
@@ -119,10 +123,14 @@ class JobManager:
                 raise RuntimeError(
                     "Для задачи уже использована одна повторная попытка."
                 )
-            if job.status not in {"failed", "partial"}:
+            if job.status not in {"failed", "partial", "waiting_for_captcha"}:
                 raise RuntimeError(
-                    "Повторить можно только завершившуюся ошибкой задачу."
+                    "Повторить можно только завершившуюся ошибкой задачу или "
+                    "задачу после ротации прокси."
                 )
+            if job.status == "waiting_for_captcha" and not job.proxy_rotated:
+                raise RuntimeError("Сначала вызовите rotate-proxy для этой задачи.")
+            job.cancel_event.set()
             job.retry_count += 1
             job.status = "queued"
             job.started_at = None
@@ -130,7 +138,7 @@ class JobManager:
             job.error = None
             job.warnings = []
             job.archive = None
-            job.cancel_event.clear()
+            job.cancel_event = threading.Event()
             self._queue.put(job.id)
             return self.snapshot(job)
 
@@ -190,10 +198,11 @@ class JobManager:
             job.status = "running"
             job.started_at = _now()
             job.attempt += 1
+            run_event = job.cancel_event
 
         def captcha() -> None:
             with self._lock:
-                if job.status != "cancelled":
+                if job.status == "running":
                     job.status = "waiting_for_captcha"
 
         try:
@@ -203,20 +212,23 @@ class JobManager:
                 timeout_seconds=job.timeout_seconds,
                 fresh_profile=job.fresh_profile,
                 on_captcha=captcha,
-                should_cancel=job.cancel_event.is_set,
+                should_cancel=run_event.is_set,
                 output_dir=self._output_dir,
             )
         except Exception as exc:  # noqa: BLE001 - worker must turn crashes into job failures.
-            archive, error = None, f"Ошибка worker: {exc}"
+            archive, error = None, f"Ошибка worker: {sanitize_error(exc)}"
 
         with self._lock:
-            if job.cancel_event.is_set() or job.status == "cancelled":
-                job.status = "cancelled"
-                job.finished_at = _now()
+            if run_event.is_set():
+                if job.status != "queued":
+                    job.status = "cancelled"
+                    job.finished_at = _now()
                 return
             if archive is None:
                 job.status = "failed"
-                job.error = error or "Парсер не вернул результат."
+                job.error = (
+                    sanitize_error(error) if error else "Парсер не вернул результат."
+                )
                 job.finished_at = _now()
                 return
 
@@ -224,7 +236,7 @@ class JobManager:
             job.reviews_collected = len(archive.get("reviews", []))
             job.warnings = list(archive.get("warnings", []))
             job.status = "succeeded" if job.reviews_collected else "partial"
-            job.error = error
+            job.error = sanitize_error(error) if error else None
             job.finished_at = _now()
             archive["job"] = self.snapshot(job)
             save_archive(archive, self._output_dir)

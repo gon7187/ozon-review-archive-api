@@ -46,6 +46,7 @@ def test_health_is_public_and_jobs_require_bearer(monkeypatch):
     )
 
     assert client.get("/healthz").json() == {"status": "ok"}
+    assert client.get("/api/v1/healthz").json() == {"status": "ok"}
     assert client.post("/api/v1/jobs", json={"article": "123456"}).status_code == 401
 
 
@@ -83,6 +84,21 @@ def test_conflicting_source_is_rejected(monkeypatch):
     response = client.post(
         "/api/v1/jobs",
         json={"url": "https://www.ozon.ru/product/test-123456/", "article": "654321"},
+        headers={"Authorization": "Bearer test-token"},
+    )
+
+    assert response.status_code == 400
+
+
+def test_non_ozon_source_is_rejected_before_queue(monkeypatch):
+    monkeypatch.setenv("API_TOKEN", "test-token")
+    client = TestClient(
+        create_app(JobManager(fetcher=lambda *args, **kwargs: (None, "unused")))
+    )
+
+    response = client.post(
+        "/api/v1/jobs",
+        json={"url": "https://example.com/product/test-123456/"},
         headers={"Authorization": "Bearer test-token"},
     )
 
@@ -149,3 +165,47 @@ def test_cancel_stops_a_running_job(monkeypatch, tmp_path: Path):
 
     assert cancelled.status_code == 200
     assert cancelled.json()["status"] == "cancelled"
+
+
+def test_captcha_can_rotate_then_retry(monkeypatch, tmp_path: Path):
+    monkeypatch.setenv("API_TOKEN", "test-token")
+    calls = 0
+    rotations = 0
+
+    def fetcher(source: str, **kwargs: Any) -> tuple[dict[str, Any] | None, str | None]:
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            kwargs["on_captcha"]()
+            while not kwargs["should_cancel"]():
+                time.sleep(0.005)
+            return None, "cancelled"
+        return archive_for("123456"), None
+
+    def rotate() -> None:
+        nonlocal rotations
+        rotations += 1
+
+    client = TestClient(
+        create_app(
+            JobManager(fetcher=fetcher, proxy_rotator=rotate, output_dir=tmp_path)
+        )
+    )
+    headers = {"Authorization": "Bearer test-token"}
+    created = client.post(
+        "/api/v1/jobs", json={"article": "123456"}, headers=headers
+    ).json()
+    wait_for_status(client, "test-token", created["id"], "waiting_for_captcha")
+
+    assert (
+        client.post(
+            f"/api/v1/jobs/{created['id']}/rotate-proxy", headers=headers
+        ).status_code
+        == 200
+    )
+    retried = client.post(f"/api/v1/jobs/{created['id']}/retry", headers=headers)
+
+    assert retried.status_code == 200
+    assert rotations == 1
+    wait_for_status(client, "test-token", created["id"], "succeeded")
+    assert calls == 2

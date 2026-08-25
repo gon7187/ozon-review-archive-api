@@ -15,19 +15,21 @@ uvicorn app.api:app --host 127.0.0.1 --port 8000
 Swagger и OpenAPI доступны на `/docs` и `/openapi.json`. Проверка живого сервиса:
 
 ```bash
-curl http://127.0.0.1:8000/healthz
+curl http://127.0.0.1:8000/api/v1/healthz
 # {"status":"ok"}
 ```
 
+`/healthz` остаётся совместимым коротким alias.
+
 ## Авторизация
 
-Все endpoint'ы, кроме `/healthz`, требуют:
+Все endpoint'ы, кроме health endpoint'ов, требуют:
 
 ```http
 Authorization: Bearer <API_TOKEN>
 ```
 
-Если `API_TOKEN` не задан, защищённые endpoint'ы закрыты для всех запросов. Токен не хранится в job/result и не выводится в лог.
+`/api/v1/healthz` и `/healthz` публичные. Если `API_TOKEN` не задан, остальные endpoint'ы закрыты для всех запросов. Токен не хранится в job/result и не выводится в лог.
 
 ## Создание задачи
 
@@ -46,6 +48,8 @@ Authorization: Bearer <API_TOKEN>
 ```
 
 Можно передать только `url` или только `article`. Если переданы оба поля, артикулы должны совпадать; иначе API вернёт `400`. `max_reviews` принимает 1–5000, дефолт 200. `timeout_seconds` принимает 1–2800, дефолт 600.
+
+Дефолты и серверные максимумы можно задать до старта процесса через `DEFAULT_MAX_REVIEWS`, `MAX_MAX_REVIEWS`, `DEFAULT_TIMEOUT_SECONDS` и `MAX_TIMEOUT_SECONDS`. Жёсткие верхние границы остаются 5000 и 2800.
 
 Для повторного безопасного вызова используйте `Idempotency-Key`. Одинаковый ключ возвращает ту же задачу, пока сервис живёт.
 
@@ -151,7 +155,9 @@ POST /api/v1/jobs/{job_id}/retry
 POST /api/v1/jobs/{job_id}/rotate-proxy
 ```
 
-Ротация доступна в `waiting_for_captcha` или после `failed`. Она только вызывает заранее настроенный `PROXY_ROTATE_URL` и выставляет `proxy_rotated=true`; повторный запуск выполняется отдельным `/retry`. Произвольный URL из тела запроса не принимается.
+Ротация доступна в `waiting_for_captcha` или после `failed`. Она вызывает заранее настроенный `PROXY_ROTATE_URL` и выставляет `proxy_rotated=true`; для captcha после этого вызов `/retry` остановит старый browser wait и запустит новую попытку с уже сменившимся IP. Произвольный URL из тела запроса не принимается.
+
+Если сервис ротации не настроен или вернул ошибку, API отвечает `502`; тело ответа провайдера наружу не попадает.
 
 Настройки ротации:
 

@@ -92,6 +92,10 @@ curl -X POST http://127.0.0.1:8000/api/v1/jobs \
 Переменные окружения:
 
 - `API_TOKEN` — Bearer-токен для защищённых endpoint'ов;
+- `DEFAULT_MAX_REVIEWS` — дефолтный лимит, по умолчанию `200`;
+- `MAX_MAX_REVIEWS` — серверный максимум, по умолчанию `5000`;
+- `DEFAULT_TIMEOUT_SECONDS` — дефолтный таймаут, по умолчанию `600`;
+- `MAX_TIMEOUT_SECONDS` — серверный максимум, по умолчанию `2800`;
 - `OZON_OUTPUT_DIR` — каталог JSON, по умолчанию `output`;
 - `OZON_PROFILE_DIR` — постоянный профиль Chrome;
 - `OZON_PROXY_URL` — прокси для браузера;
@@ -99,4 +103,4 @@ curl -X POST http://127.0.0.1:8000/api/v1/jobs \
 - `PROXY_ROTATE_METHOD` — `POST` по умолчанию, можно `GET`;
 - `PROXY_ROTATE_TOKEN` — токен сервиса ротации, не попадает в логи и JSON.
 
-`/healthz` публичный. Остальные endpoint'ы требуют Bearer-токен. Для внешнего доступа ставьте reverse proxy с TLS; встроенный Uvicorn рассчитан на локальный запуск.
+`/healthz` и `/api/v1/healthz` публичные. Остальные endpoint'ы требуют Bearer-токен. URL задач принимаются только по HTTPS с хостами Ozon. Для внешнего доступа ставьте reverse proxy с TLS; встроенный Uvicorn рассчитан на локальный запуск.

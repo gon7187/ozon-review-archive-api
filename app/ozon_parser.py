@@ -11,6 +11,7 @@ from collections.abc import Callable
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlsplit
 
 logger = logging.getLogger(__name__)
 
@@ -18,11 +19,24 @@ PRODUCT_ID_PATTERNS = (
     re.compile(r"/product/(?:[^/?#]*-)?(\d{6,})(?:[/ ?#]|$)", re.IGNORECASE),
     re.compile(r"/product/(\d{6,})(?:[/ ?#]|$)", re.IGNORECASE),
 )
-DEFAULT_REVIEWS_LIMIT = 200
-MAX_REVIEWS_LIMIT = 5_000
-DEFAULT_TIMEOUT_SECONDS = 600
-MAX_TIMEOUT_SECONDS = 2_800
 SCHEMA_VERSION = "1.0"
+OZON_HOSTS = frozenset({"ozon.ru", "www.ozon.ru", "m.ozon.ru"})
+
+
+def _configured_limit(name: str, default: int, upper_bound: int) -> int:
+    raw_value = os.getenv(name)
+    value = default if raw_value is None else int(raw_value)
+    if not 1 <= value <= upper_bound:
+        raise ValueError(f"{name} должен быть от 1 до {upper_bound}.")
+    return value
+
+
+MAX_REVIEWS_LIMIT = _configured_limit("MAX_MAX_REVIEWS", 5_000, 5_000)
+DEFAULT_REVIEWS_LIMIT = _configured_limit("DEFAULT_MAX_REVIEWS", 200, MAX_REVIEWS_LIMIT)
+MAX_TIMEOUT_SECONDS = _configured_limit("MAX_TIMEOUT_SECONDS", 2_800, 2_800)
+DEFAULT_TIMEOUT_SECONDS = _configured_limit(
+    "DEFAULT_TIMEOUT_SECONDS", 600, MAX_TIMEOUT_SECONDS
+)
 
 
 class OzonFetchCancelled(Exception):
@@ -42,6 +56,40 @@ def get_product_id_from_url(value: str) -> str | None:
         if match:
             return match.group(1)
     return None
+
+
+def is_allowed_ozon_url(value: str) -> bool:
+    try:
+        parsed = urlsplit(value.strip())
+        port = parsed.port
+    except ValueError:
+        return False
+    return (
+        parsed.scheme == "https"
+        and parsed.hostname in OZON_HOSTS
+        and port is None
+        and parsed.username is None
+        and parsed.password is None
+    )
+
+
+def sanitize_error(value: Any) -> str:
+    message = str(value)
+    message = re.sub(
+        r"(?i)(https?://)([^/\s:@]+):([^@\s/]+)@",
+        r"\1***:***@",
+        message,
+    )
+    for name in (
+        "API_TOKEN",
+        "OZON_PROXY_URL",
+        "PROXY_ROTATE_URL",
+        "PROXY_ROTATE_TOKEN",
+    ):
+        secret = os.getenv(name)
+        if secret:
+            message = message.replace(secret, "***")
+    return message[:500]
 
 
 def _json_nodes(value: Any) -> list[dict[str, Any]]:
@@ -408,11 +456,17 @@ def _extract_page(
     while len(reviews) < reviews_limit and stable_rounds < 4:
         if deadline is not None:
             _check_fetch_state(deadline, should_cancel)
+        elif should_cancel and should_cancel():
+            raise OzonFetchCancelled
         before = len(reviews)
         candidates = page.locator("[data-review-uuid], [data-review-id]")
         if not candidates.count():
             candidates = page.locator("[data-widget='webListReviews'] > div > div")
         for index in range(min(candidates.count(), reviews_limit * 3)):
+            if deadline is not None:
+                _check_fetch_state(deadline, should_cancel)
+            elif should_cancel and should_cancel():
+                raise OzonFetchCancelled
             record = _extract_review_record(candidates.nth(index))
             if record is None:
                 continue
@@ -571,6 +625,10 @@ def fetch_product_archive_and_reviews(
     product_id = get_product_id_from_url(product_url_or_id)
     if not product_id:
         return None, "Не удалось извлечь артикул Ozon из ссылки."
+    if not product_url_or_id.strip().isdigit() and not is_allowed_ozon_url(
+        product_url_or_id
+    ):
+        return None, "Ссылка должна быть HTTPS-адресом карточки Ozon."
     requested_url = (
         f"https://www.ozon.ru/product/{product_id}/"
         if product_url_or_id.strip().isdigit()
@@ -677,9 +735,9 @@ def fetch_product_archive_and_reviews(
         return None, "Задача отменена пользователем."
     except OzonFetchTimeout:
         return None, "Истёк таймаут загрузки Ozon."
-    except Exception as exc:
-        logger.exception("Не удалось получить отзывы Ozon")
-        message = str(exc)
+    except Exception as exc:  # noqa: BLE001 - report browser/network failures safely.
+        logger.error("Не удалось получить отзывы Ozon (%s)", type(exc).__name__)
+        message = sanitize_error(exc)
         if "Executable doesn't exist" in message:
             message = "Браузер не установлен. Выполните: playwright install chromium"
         return None, f"Не удалось загрузить Ozon: {message}"

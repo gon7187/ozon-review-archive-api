@@ -15,7 +15,9 @@ from app.ozon_parser import (
     MAX_REVIEWS_LIMIT,
     MAX_TIMEOUT_SECONDS,
     get_product_id_from_url,
+    is_allowed_ozon_url,
 )
+from app.proxy import ProxyRotationError
 
 
 class JobRequest(BaseModel):
@@ -52,6 +54,8 @@ def _bad_request(message: str) -> HTTPException:
 
 def _normalize_source(request: JobRequest) -> tuple[str | None, str]:
     url = request.url.strip() if request.url else None
+    if url and not is_allowed_ozon_url(url):
+        raise _bad_request("url должен быть HTTPS-адресом карточки Ozon.")
     article_from_url = get_product_id_from_url(url) if url else None
     article = request.article.strip() if request.article else None
     if url and not article_from_url:
@@ -69,6 +73,8 @@ def _normalize_source(request: JobRequest) -> tuple[str | None, str]:
 def _manager_error(error: Exception) -> HTTPException:
     if isinstance(error, KeyError):
         return HTTPException(status_code=404, detail="Задача не найдена.")
+    if isinstance(error, ProxyRotationError):
+        return HTTPException(status_code=502, detail=str(error))
     if isinstance(error, RuntimeError):
         return HTTPException(status_code=409, detail=str(error))
     return HTTPException(status_code=500, detail="Ошибка менеджера задач.")
@@ -83,6 +89,7 @@ def create_app(manager: JobManager | None = None) -> FastAPI:
     )
 
     @application.get("/healthz")
+    @application.get("/api/v1/healthz")
     def healthz() -> dict[str, str]:
         return {"status": "ok"}
 
