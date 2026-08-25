@@ -4,3 +4,5 @@ python-dotenv
 customtkinter
 Pillow
 playwright
+fastapi
+uvicorn[standard]
