@@ -4,10 +4,10 @@ import json
 import logging
 import os
 import re
-import shutil
 import tempfile
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
+from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -45,6 +45,19 @@ class OzonFetchCancelled(Exception):
 
 class OzonFetchTimeout(Exception):
     pass
+
+
+@contextmanager
+def _profile_directory(fresh_profile: bool) -> Iterator[Path]:
+    persistent_profile = Path(
+        os.getenv("OZON_PROFILE_DIR", str(Path.home() / ".ozon-review-analyzer"))
+    )
+    if fresh_profile:
+        with tempfile.TemporaryDirectory(prefix="ozon-profile-") as directory:
+            yield Path(directory)
+        return
+    persistent_profile.mkdir(parents=True, exist_ok=True)
+    yield persistent_profile
 
 
 def get_product_id_from_url(value: str) -> str | None:
@@ -645,15 +658,11 @@ def fetch_product_archive_and_reviews(
             "pip install playwright && playwright install chromium"
         )
 
-    profile_dir = Path(
-        os.getenv("OZON_PROFILE_DIR", str(Path.home() / ".ozon-review-analyzer"))
-    )
-    if fresh_profile and profile_dir.exists():
-        shutil.rmtree(profile_dir)
-    profile_dir.mkdir(parents=True, exist_ok=True)
-
     try:
-        with sync_playwright() as playwright:
+        with (
+            _profile_directory(fresh_profile) as profile_dir,
+            sync_playwright() as playwright,
+        ):
             proxy_url = os.getenv("OZON_PROXY_URL")
             launch_kwargs: dict[str, Any] = {
                 "headless": False,
@@ -714,7 +723,11 @@ def fetch_product_archive_and_reviews(
                 )
                 archive = {
                     "schema_version": SCHEMA_VERSION,
-                    "job": {},
+                    "job": {
+                        "job_id": None,
+                        "attempt": 1,
+                        "proxy_rotated": False,
+                    },
                     "product": _collect_product_metadata(
                         page, requested_url, product_id, title
                     ),

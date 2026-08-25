@@ -7,7 +7,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 from app.ozon_parser import (
     fetch_product_archive_and_reviews,
@@ -18,6 +18,15 @@ from app.proxy import rotate_proxy
 
 JobFetcher = Callable[..., tuple[dict[str, Any] | None, str | None]]
 JobProxyRotator = Callable[[], None]
+JobStatus = Literal[
+    "queued",
+    "running",
+    "waiting_for_captcha",
+    "succeeded",
+    "partial",
+    "failed",
+    "cancelled",
+]
 
 
 def _now() -> str:
@@ -32,7 +41,7 @@ class Job:
     max_reviews: int
     timeout_seconds: int
     fresh_profile: bool
-    status: str = "queued"
+    status: JobStatus = "queued"
     created_at: str = field(default_factory=_now)
     started_at: str | None = None
     finished_at: str | None = None
@@ -254,5 +263,9 @@ class JobManager:
             job.status = "succeeded" if job.reviews_collected else "partial"
             job.error = sanitize_error(error) if error else None
             job.finished_at = _now()
-            archive["job"] = self.snapshot(job)
+            archive["job"] = {
+                "job_id": job.id,
+                "attempt": job.attempt,
+                "proxy_rotated": job.proxy_rotated,
+            }
             save_archive(archive, self._output_dir)

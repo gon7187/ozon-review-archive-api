@@ -45,7 +45,7 @@ def test_health_is_public_and_jobs_require_bearer(monkeypatch):
         create_app(JobManager(fetcher=lambda *args, **kwargs: (None, "unused")))
     )
 
-    assert client.get("/healthz").json() == {"status": "ok"}
+    assert client.get("/healthz").status_code == 404
     assert client.get("/api/v1/healthz").json() == {"status": "ok"}
     assert client.post("/api/v1/jobs", json={"article": "123456"}).status_code == 401
 
@@ -72,6 +72,11 @@ def test_job_is_async_idempotent_and_result_is_saved(monkeypatch, tmp_path: Path
     )
     assert result.status_code == 200
     assert result.json()["product"]["article"] == "123456"
+    assert result.json()["job"] == {
+        "job_id": job["id"],
+        "attempt": 1,
+        "proxy_rotated": False,
+    }
     assert (tmp_path / "123456.json").exists()
 
 

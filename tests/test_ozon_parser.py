@@ -1,4 +1,5 @@
 from app.ozon_parser import (
+    _profile_directory,
     fetch_product_data_and_reviews,
     make_review_record,
     parse_product_jsonld,
@@ -6,6 +7,23 @@ from app.ozon_parser import (
     sanitize_error,
     save_archive,
 )
+
+
+def test_fresh_profile_preserves_persistent_profile(monkeypatch, tmp_path):
+    persistent_profile = tmp_path / "persistent"
+    persistent_profile.mkdir()
+    marker = persistent_profile / "captcha-session"
+    marker.write_text("keep", encoding="utf-8")
+    monkeypatch.setenv("OZON_PROFILE_DIR", str(persistent_profile))
+
+    with _profile_directory(fresh_profile=True) as profile_dir:
+        fresh_profile = profile_dir
+        assert fresh_profile != persistent_profile
+        assert fresh_profile.exists()
+        assert marker.read_text(encoding="utf-8") == "keep"
+
+    assert not fresh_profile.exists()
+    assert marker.read_text(encoding="utf-8") == "keep"
 
 
 def test_jsonld_product_fields_are_normalized():

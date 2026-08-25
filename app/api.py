@@ -2,7 +2,8 @@ from __future__ import annotations
 
 import os
 import secrets
-from typing import Annotated
+from collections.abc import Callable
+from typing import Annotated, Any
 
 from fastapi import Depends, FastAPI, Header, HTTPException, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
@@ -80,6 +81,13 @@ def _manager_error(error: Exception) -> HTTPException:
     return HTTPException(status_code=500, detail="Ошибка менеджера задач.")
 
 
+def _job_call(action: Callable[[str], dict[str, Any]], job_id: str) -> dict[str, Any]:
+    try:
+        return action(job_id)
+    except Exception as exc:
+        raise _manager_error(exc) from exc
+
+
 def create_app(manager: JobManager | None = None) -> FastAPI:
     jobs = manager or JobManager()
     application = FastAPI(
@@ -88,7 +96,6 @@ def create_app(manager: JobManager | None = None) -> FastAPI:
         description="Асинхронная выгрузка структурированных отзывов Ozon для мультиагентной системы.",
     )
 
-    @application.get("/healthz")
     @application.get("/api/v1/healthz")
     def healthz() -> dict[str, str]:
         return {"status": "ok"}
@@ -112,38 +119,23 @@ def create_app(manager: JobManager | None = None) -> FastAPI:
 
     @application.get("/api/v1/jobs/{job_id}", dependencies=protected)
     def get_job(job_id: str) -> dict:
-        try:
-            return jobs.get(job_id)
-        except Exception as exc:
-            raise _manager_error(exc) from exc
+        return _job_call(jobs.get, job_id)
 
     @application.get("/api/v1/jobs/{job_id}/result", dependencies=protected)
     def get_result(job_id: str) -> dict:
-        try:
-            return jobs.result(job_id)
-        except Exception as exc:
-            raise _manager_error(exc) from exc
+        return _job_call(jobs.result, job_id)
 
     @application.post("/api/v1/jobs/{job_id}/cancel", dependencies=protected)
     def cancel_job(job_id: str) -> dict:
-        try:
-            return jobs.cancel(job_id)
-        except Exception as exc:
-            raise _manager_error(exc) from exc
+        return _job_call(jobs.cancel, job_id)
 
     @application.post("/api/v1/jobs/{job_id}/retry", dependencies=protected)
     def retry_job(job_id: str) -> dict:
-        try:
-            return jobs.retry(job_id)
-        except Exception as exc:
-            raise _manager_error(exc) from exc
+        return _job_call(jobs.retry, job_id)
 
     @application.post("/api/v1/jobs/{job_id}/rotate-proxy", dependencies=protected)
     def rotate_proxy(job_id: str) -> dict:
-        try:
-            return jobs.rotate_proxy_for_job(job_id)
-        except Exception as exc:
-            raise _manager_error(exc) from exc
+        return _job_call(jobs.rotate_proxy_for_job, job_id)
 
     return application
 
