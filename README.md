@@ -19,7 +19,11 @@
 ```json
 {
   "schema_version": "1.0",
-  "job": {},
+  "job": {
+    "job_id": "8c0d...",
+    "attempt": 1,
+    "proxy_rotated": false
+  },
   "product": {
     "requested_url": "https://www.ozon.ru/product/2608237202/",
     "source_url": "https://www.ozon.ru/product/2608237202/reviews/",
@@ -87,6 +91,14 @@ curl -X POST http://127.0.0.1:8000/api/v1/jobs \
 
 Затем мультиагентная система опрашивает `GET /api/v1/jobs/<job_id>` и забирает `GET /api/v1/jobs/<job_id>/result` после статуса `succeeded` или `partial`.
 
+Проверить полный путь на публичной карточке Ozon:
+
+```bash
+API_TOKEN=change-me python scripts/live_smoke.py
+```
+
+По умолчанию проверяется артикул `138342427`; API должен быть уже запущен локально.
+
 Очередь однопоточная: одновременно работает один Chrome. Redis, PostgreSQL и S3 не нужны. По умолчанию сохраняется до 200 отзывов, максимум — 5000; таймаут по умолчанию 600 секунд, максимум — 2800.
 
 Переменные окружения:
@@ -103,4 +115,4 @@ curl -X POST http://127.0.0.1:8000/api/v1/jobs \
 - `PROXY_ROTATE_METHOD` — `POST` по умолчанию, можно `GET`;
 - `PROXY_ROTATE_TOKEN` — токен сервиса ротации, не попадает в логи и JSON.
 
-`/healthz` и `/api/v1/healthz` публичные. Остальные endpoint'ы требуют Bearer-токен. URL задач принимаются только по HTTPS с хостами Ozon. Для внешнего доступа ставьте reverse proxy с TLS; встроенный Uvicorn рассчитан на локальный запуск.
+Только `/api/v1/healthz` публичный. Остальные endpoint'ы требуют Bearer-токен. URL задач принимаются только по HTTPS с хостами Ozon. Для внешнего доступа ставьте reverse proxy с TLS; встроенный Uvicorn рассчитан на локальный запуск.

@@ -19,17 +19,15 @@ curl http://127.0.0.1:8000/api/v1/healthz
 # {"status":"ok"}
 ```
 
-`/healthz` остаётся совместимым коротким alias.
-
 ## Авторизация
 
-Все endpoint'ы, кроме health endpoint'ов, требуют:
+Все endpoint'ы, кроме `/api/v1/healthz`, требуют:
 
 ```http
 Authorization: Bearer <API_TOKEN>
 ```
 
-`/api/v1/healthz` и `/healthz` публичные. Если `API_TOKEN` не задан, остальные endpoint'ы закрыты для всех запросов. Токен не хранится в job/result и не выводится в лог.
+`/api/v1/healthz` публичный. Если `API_TOKEN` не задан, остальные endpoint'ы закрыты для всех запросов. Токен не хранится в job/result и не выводится в лог.
 
 ## Создание задачи
 
@@ -49,6 +47,8 @@ Authorization: Bearer <API_TOKEN>
 
 Можно передать только `url` или только `article`. Если переданы оба поля, артикулы должны совпадать; иначе API вернёт `400`. `max_reviews` принимает 1–5000, дефолт 200. `timeout_seconds` принимает 1–2800, дефолт 600.
 
+`fresh_profile=true` создаёт отдельный временный профиль только для этой попытки и удаляет его после закрытия Chrome. Постоянный `OZON_PROFILE_DIR` с пройденной CAPTCHA не удаляется.
+
 Дефолты и серверные максимумы можно задать до старта процесса через `DEFAULT_MAX_REVIEWS`, `MAX_MAX_REVIEWS`, `DEFAULT_TIMEOUT_SECONDS` и `MAX_TIMEOUT_SECONDS`. Жёсткие верхние границы остаются 5000 и 2800.
 
 Для повторного безопасного вызова используйте `Idempotency-Key`. Одинаковый ключ возвращает ту же задачу, пока сервис живёт.
@@ -65,6 +65,46 @@ curl -X POST http://127.0.0.1:8000/api/v1/jobs \
     "max_reviews": 200,
     "timeout_seconds": 600
   }'
+```
+
+То же на Python:
+
+```python
+import os
+import time
+
+import requests
+
+base_url = "http://127.0.0.1:8000"
+headers = {"Authorization": f"Bearer {os.environ['API_TOKEN']}"}
+response = requests.post(
+    f"{base_url}/api/v1/jobs",
+    headers=headers,
+    json={"article": "138342427", "max_reviews": 5, "timeout_seconds": 600},
+    timeout=30,
+)
+response.raise_for_status()
+job_id = response.json()["id"]
+
+while True:
+    response = requests.get(
+        f"{base_url}/api/v1/jobs/{job_id}", headers=headers, timeout=30
+    )
+    response.raise_for_status()
+    job = response.json()
+    if job["status"] in {"succeeded", "partial", "failed", "cancelled"}:
+        break
+    time.sleep(1)
+
+if job["status"] not in {"succeeded", "partial"}:
+    raise RuntimeError(job["error"] or job["status"])
+
+response = requests.get(
+    f"{base_url}/api/v1/jobs/{job_id}/result", headers=headers, timeout=30
+)
+response.raise_for_status()
+archive = response.json()
+print(archive["product"]["article"], len(archive["reviews"]))
 ```
 
 Ответ:
@@ -130,6 +170,14 @@ warnings           непустые предупреждения без поте
 `product.category_path` равен `null`, если категорию не удалось получить. У неизвестных scalar-полей отзывов значение `null`, у `photos` и `videos` — `[]`.
 
 Файл также сохраняется локально как `OZON_OUTPUT_DIR/<article>.json`. В БД, Redis и S3 сервис не пишет; хранение бессрочное до ручного удаления файла.
+
+Воспроизводимый smoke-тест полного API-пути:
+
+```bash
+API_TOKEN=replace-with-a-long-random-token python scripts/live_smoke.py
+```
+
+Скрипт по умолчанию отправляет артикул `138342427`, ждёт терминальный статус и проверяет API-ответ и локальный JSON. Другой адрес API или артикул можно передать через `--base-url` и `--article`.
 
 ## Управление задачей
 
